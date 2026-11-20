@@ -1,11 +1,11 @@
-// ext_live_test.js v4 — 真浏览器装载扩展端到端实测（v2 全站版）
+// ext_live_test.js v5 — 真浏览器装载扩展端到端实测（去内置平台版：全站通用 keys）
 // 历史根因（ext_probe.js 实锤）：Chrome/Edge 157 stable 忽略 --load-extension，
 //   旧抓到的 id admccjkmockfdflocgggjfgdacdodkdf 是内置组件 "Gemini in Chrome" ⇒ 扩展从未装载。
 // 正解：browser 级 CDP `Extensions.loadUnpacked{path}`（返回 {id}）。
-// v4 相对 v3：popup DOM 变（#list/.row 不再等于全部行）→ 只数 `#list .row`；
-//   新增 v2 能力实测：scanDomain 任意域（已知/未知）、saveSite→getVault→exportNetscape、getAuto/setAuto。
+// v5 相对 v4：内置平台表已删 → 无 #list、无 {type:'scan'}、无 button[data-tag]；
+//   抓取统一走 scanDomain/copyHost，任何域名 known=false、label=可注册域、keys=通用 keys。
 // 链路：起浏览器 → loadUnpacked → 注入 3 条测试 cookie（含 httpOnly __puus）→
-//       开 popup → scan 注入验证 → 点复制 → 断言 #status → Get-Clipboard 复核 → v2 全站能力断言
+//       开 popup → 按域名抓 → 注入值/去重/不串域 → 点复制 → 断言 #status → Get-Clipboard 复核 → 全站能力断言
 // 用法：node ext_live_test.js            headless（默认，快、不弹窗）
 //       node ext_live_test.js visible    可见窗口（剪贴板断言必须 visible）
 'use strict';
@@ -123,7 +123,7 @@ function killTestBrowsers() {
   const pop = (await cdp.send('Target.createTarget', { url: `chrome-extension://${extId}/popup.html` })).targetId;
   const q = (await cdp.send('Target.attachToTarget', { targetId: pop, flatten: true })).sessionId;
   await cdp.send('Runtime.enable', {}, q);
-  await sleep(2000);                                       // popup.js init() 自动 scan
+  await sleep(2000);
 
   const ev = (expression) => cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, q);
   const msg = (objLiteral) => ev(`chrome.runtime.sendMessage(${objLiteral}).then(r => JSON.stringify(r)).catch(x => JSON.stringify({err:String(x)}))`)
@@ -133,7 +133,7 @@ function killTestBrowsers() {
       href: location.href,
       rtId: (typeof chrome !== 'undefined' && chrome.runtime) ? chrome.runtime.id : 'NO',
       manifestName: (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest().name : 'NO',
-      listRows: document.querySelectorAll('#list .row').length,
+      hasList: !!document.getElementById('list'),
       allRows: document.querySelectorAll('.row').length,
       hasAuto: !!document.getElementById('auto'),
       hasDomain: !!document.getElementById('domain'),
@@ -143,31 +143,39 @@ function killTestBrowsers() {
   console.log('  popup env: ' + JSON.stringify(e));
   t('popup 是真扩展页面（runtime.id 对上）', e.rtId === extId, e.rtId);
   t('manifest 身份正确（Cookie Exporter）', /Cookie Exporter/.test(e.manifestName || ''), e.manifestName);
-  t('v2 DOM：#list 渲染 15 个内置平台行', e.listRows === 15, 'got ' + e.listRows);
-  t('v2 DOM：总 .row 数 > 15（当前页/域名行也在，修正 v1 死断言）', e.allRows > e.listRows, 'all=' + e.allRows + ' list=' + e.listRows);
+  t('去内置平台：popup 已无 #list 平台区', e.hasList === false, e.hasList);
   t('v2 DOM：自动抓取/按域名/本地库控件齐备', e.hasAuto && e.hasDomain && e.hasVault);
   t('去云析化：popup 无云析桥残留 DOM', e.hasYunx === false, e.hasYunx);
 
-  // 4) messaging 驱动真 SW：scan（已知平台打标签，逻辑未变）
-  const scan = await msg("{type:'scan'}");
-  t('sendMessage{scan} 返回 ok', scan.ok === true, JSON.stringify(scan).slice(0, 140));
-  const list = (scan.platforms || []);
-  const quark = list.find(s => s.tag === 'quark');
-  const baidu = list.find(s => s.tag === 'baidu');
-  const pairs = quark ? Object.fromEntries(String(quark.header).split('; ').map(kv => {
+  // 4) messaging 驱动真 SW：scanDomain（全站通用，无平台表 → known 恒 false）
+  const quark = await msg("{type:'scanDomain',host:'pan.quark.cn'}");
+  t('scanDomain pan.quark.cn → ok/known=false/domain=quark.cn',
+    quark.ok === true && quark.known === false && quark.domain === 'quark.cn', JSON.stringify(quark).slice(0, 160));
+  const pairs = quark ? Object.fromEntries(String(quark.header || '').split('; ').filter(Boolean).map(kv => {
     const i = kv.indexOf('='); return [kv.slice(0, i), kv.slice(i + 1)];
   })) : {};
-  t('SW scanAll → quark 至少含注入的两条', quark && quark.count >= 2, JSON.stringify(quark && { c: quark.count, k: quark.keysHit }));
-  t('keysHit 含 __pus/__puus', quark && quark.keysHit.includes('__pus') && quark.keysHit.includes('__puus'), quark && JSON.stringify(quark.keysHit));
+  t('scanDomain 抓到注入的两条（count>=2）', quark && quark.count >= 2, JSON.stringify(quark && { c: quark.count }));
   t('注入值原样读出（httpOnly __puus + 普通 __pus）',
     pairs.__pus === 'PUS_LIVETEST' && pairs.__puus === 'PUUS_LIVETEST', JSON.stringify({ pus: pairs.__pus, puus: pairs.__puus }));
-  t('quark 串按 path 具体度去重（同名只留一条）', quark && (String(quark.header).match(/__pus=/g) || []).length === 1);
-  t('跨平台不串（百度诱饵不在 quark 串）', quark && !/BAIDU_DECOY/.test(quark.header));
-  t('baidu 平台单独可见诱饵', baidu && baidu.count >= 1 && /BAIDU_DECOY/.test(baidu.header), JSON.stringify(baidu && { c: baidu.count }));
+  t('串按 path 具体度去重（同名只留一条）', quark && (String(quark.header).match(/__pus=/g) || []).length === 1);
+  t('跨站不串（百度诱饵不在 quark 串）', quark && !/BAIDU_DECOY/.test(quark.header));
+  t('keysHit 是数组（无平台专属 keys，全站通用）', Array.isArray(quark.keysHit));
 
-  // 5) 点复制按钮 → #status 文案（writeText 成功才出现）
+  const baidu = await msg("{type:'scanDomain',host:'pan.baidu.com'}");
+  t('百度站单独可见诱饵（任意域名入口走通）',
+    baidu.ok === true && baidu.domain === 'baidu.com' && baidu.count >= 1 && /BAIDU_DECOY/.test(baidu.header || ''),
+    JSON.stringify(baidu && { d: baidu.domain, c: baidu.count }));
+
+  // 5) UI 按域名抓 + 点复制 → #status（writeText 成功才出现）
   const statusTxt = (await ev(`(async () => {
-      const btn = [...document.querySelectorAll('button[data-tag]')].find(b => b.dataset.tag === 'quark');
+      const inp = document.getElementById('domain');
+      inp.value = 'pan.quark.cn';
+      document.getElementById('grabDomain').click();
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        if (document.querySelector('#manual button[data-act=copyhost]')) break;
+      }
+      const btn = document.querySelector('#manual button[data-act=copyhost][data-host]');
       if (!btn) return 'NO BUTTON';
       btn.click();
       for (let i = 0; i < 40; i++) {
@@ -178,8 +186,11 @@ function killTestBrowsers() {
       return 'TIMEOUT: ' + document.getElementById('status').textContent;
     })()`)).result.value;
   console.log('  popup 状态: ' + statusTxt);
-  t('点复制 → 已复制 夸克网盘 N 项 + 登录位 → 已到剪贴板',
-    /已复制 .*夸克.* \d+ 项/.test(statusTxt) && /__pus\/__puus|__puus\/__pus/.test(statusTxt) && /已到剪贴板/.test(statusTxt), statusTxt);
+  t('点复制 → 已复制 quark.cn 的 N 项 → 已到剪贴板',
+    /已复制 quark\.cn 的 \d+ 项/.test(statusTxt) && /已到剪贴板/.test(statusTxt), statusTxt);
+  // 去内置平台后：登录位只标通用 keys（如 token/session），不再出现 __pus/__puus 平台专属键
+  t('去内置平台：登录位只用通用 keys（无 __pus/__puus 平台专属键）',
+    !/登录位[^\n]*__(pus|puus)/.test(statusTxt), statusTxt);
 
   // 6) 独立复核系统剪贴板（headless 可能不与 Windows 剪贴板同步 ⇒ 轮询，仍不过则改 visible 模式跑）
   let clip = '';
@@ -191,19 +202,16 @@ function killTestBrowsers() {
     clip.includes('__puus=PUUS_LIVETEST') && clip.includes('__pus=PUS_LIVETEST') && !clip.includes('BAIDU_DECOY'),
     JSON.stringify(clip.slice(0, 80)) + (MODE === 'headless' ? ' ← headless 若不共享剪贴板请用 visible 模式复跑' : ''));
 
-  // ===== v2 新能力：不限网站 =====
-  // 7) scanDomain 已知站（复用注入的 quark cookie，验证任意域名入口走通）
-  const sdKnown = await msg("{type:'scanDomain',host:'pan.quark.cn'}");
-  t('scanDomain 已知站 pan.quark.cn → ok/known=true/domain=quark.cn',
-    sdKnown.ok === true && sdKnown.known === true && sdKnown.domain === 'quark.cn', JSON.stringify(sdKnown).slice(0, 160));
-  t('scanDomain 已知站抓到注入的 httpOnly 值',
-    sdKnown.ok === true && /PUUS_LIVETEST/.test(sdKnown.header || ''), sdKnown && sdKnown.count);
+  // ===== 全站能力：任何域名（无内置平台概念）=====
+  // 7) scanDomain 常见站（复用注入的 quark cookie，验证任意域名入口走通）
+  t('scanDomain pan.quark.cn 抓到 httpOnly 值',
+    quark.ok === true && /PUUS_LIVETEST/.test(quark.header || ''), quark && quark.count);
 
-  // 8) scanDomain 未知站（不在 15 平台表 → 仍用通用 keys 抓，证明"不限网站"）
+  // 8) scanDomain 未访问过的站（无 cookie → 优雅返回，证明"不限网站"且不报错）
   const sdUnknown = await msg("{type:'scanDomain',host:'random-site-xyz.com'}");
-  t('scanDomain 未知站 random-site-xyz.com → ok/known=false/domain 原样',
+  t('scanDomain 未访问站 → ok/known=false/domain 原样',
     sdUnknown.ok === true && sdUnknown.known === false && sdUnknown.domain === 'random-site-xyz.com', JSON.stringify(sdUnknown).slice(0, 160));
-  t('scanDomain 未知站无 cookie → count=0/header 空（优雅返回非报错）',
+  t('scanDomain 未访问站无 cookie → count=0/header 空（优雅返回非报错）',
     sdUnknown.ok === true && sdUnknown.count === 0 && sdUnknown.header === '', JSON.stringify(sdUnknown).slice(0, 160));
 
   // 9) saveSite → getVault → exportNetscape（本地库 + Netscape 导出全链路）

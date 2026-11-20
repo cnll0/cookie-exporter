@@ -2,12 +2,12 @@
 
 一个 Chrome MV3 扩展：把浏览器里**任意已登录网站**的 Cookie 抓取下来，可复制到剪贴板、存入本地库、导出为 Netscape `cookies.txt`。
 
-**v2 · 不限网站** —— 不再局限于内置平台表，任何域名都能抓。
+**v2 · 不限网站** —— 没有任何内置平台表，所有站点一视同仁：全站用统一的一组通用关键 Cookie 名判定登录位、按可注册域归类。
 
 - **数据不出本机**：全程只调用 `chrome.cookies` API 读取、在扩展内部拼接、写入剪贴板 / `chrome.storage.local`，没有任何网络上报、没有远程服务器。
 - **能读到 httpOnly / v20 加密 Cookie**：由 Chrome 自己解密后经扩展 API 交出，绕开"直接读 Cookie 数据库拿不到明文"的限制（Chrome 127+ 的 App-Bound Encryption 对外部程序加密，但扩展 API 不受影响）。
-- **不限网站**：`host_permissions: ["*://*/*"]` + `chrome.cookies.getAll({domain})` 对任意域名抓取。内置 15 平台表只用于"打标签 + 标登录位"，**不是**抓取范围限制。
-- **已知站用专属 keys，未知站用通用 keys**：已知站（如夸克 `__pus/__puus`、B站 `SESSDATA`）用平台专属关键 Cookie 标登录位；未知站用通用规则（`session`/`token`/`sid`/`PHPSESSID`…）抓取并归类到可注册域。
+- **不限网站**：`host_permissions: ["*://*/*"]` + `chrome.cookies.getAll({domain})` 对任意域名抓取。
+- **全站统一 keys，无平台专属逻辑**：判定登录位只用一组通用关键 Cookie 名（`session`/`sessionid`/`sid`/`token`/`access_token`/`auth`/`login`/`uid`/`userid`/`SUB`/`JSESSIONID`/`PHPSESSID`/`remember`/`csrf`）；抓到的 Cookie 按可注册域归类（如 `pan.quark.cn` → `quark.cn`），支持多级公共后缀（`.com.cn` 等）。
 
 ## 三种抓取方式
 
@@ -18,15 +18,6 @@
 | 自动抓取 | 面板「自动抓取」开关 | 开启后每访问一个站，最快 15s 入库一次（默认关） |
 
 抓取结果可「复制」成 `name=value; name=value; ...` 串，或「存本地」进 vault；vault 可一键导出为 Netscape HTTP Cookie File 格式（`cookies.txt`，供 curl/wget/下载器导入），也可清空。
-
-## 内置平台（15 个，仅用于打标签）
-
-| 分类 | 平台 |
-|---|---|
-| 网盘（8） | 夸克网盘、UC 网盘、百度网盘、中国移动云盘、123 网盘、115 网盘、阿里云盘、蓝奏云 |
-| 视频/社区（7） | 哔哩哔哩、小红书、PIXIV、抖音、快手、微博、AcFun |
-
-平台定义在 `cookie_core.js` 的 `PLATFORMS`，可自行增删（字段 `{tag, label, domains, keys}`，`domains` 为匹配的域名后缀，`keys` 为关注的关键 Cookie 名）。**不在此表的网站依然能抓**，只是没有专属登录位标签，走通用 keys。
 
 ## 安装
 
@@ -46,6 +37,7 @@
 5. 打开「自动抓取」后，之后每浏览一个站会自动入库（同域最快 15s 一次）
 
 显示「未登录 / 0 项」：说明当前 Chrome 里没有该站的 Cookie，先登录一次即可。
+显示「未检出登录位」：说明抓到的 Cookie 里没有命中通用关键名，但 Cookie 串本身仍已完整抓到、可复制。
 
 ## 隐私与权限说明
 
@@ -74,7 +66,7 @@ Node 环境跑核心逻辑单测（无需浏览器）：
 node test_core.js
 ```
 
-预期输出：`SELFTEST PASS — 60/60`
+预期输出：`SELFTEST PASS — 46/46`
 
 真浏览器端到端测试（临时启动独立 profile 的 Chrome，注入测试 Cookie，验证"装载 → 读 httpOnly → 拼接 → messaging → 剪贴板 → 全站 scanDomain/saveSite/vault/export/auto"，结束自动清理）：
 
@@ -83,19 +75,19 @@ node ext_live_test.js          # headless
 node ext_live_test.js visible  # 有头模式；剪贴板断言在 headless 下可能不共享，优先用 visible
 ```
 
-预期输出：`LIVE TEST PASS — 26/26`
+预期输出：`LIVE TEST PASS — 25/25`
 
 ## 文件结构
 
 ```
 .
 ├── manifest.json       MV3 清单（v2：6 权限 + *://*/*）
-├── background.js       service worker：扫描平台/任意域抓取/自动抓取入库/vault/Netscape 导出/响应消息
-├── cookie_core.js      平台表 + 域名匹配 + 可注册域归类 + 通用 keys + 去重拼接（纯逻辑，可 Node 单测）
-├── popup.html          面板 UI v2（当前页/按域名/自动抓取/本地库/内置平台）
+├── background.js       service worker：任意域抓取/自动抓取入库/vault/Netscape 导出/响应消息
+├── cookie_core.js      域名匹配 + 可注册域归类 + 通用 keys + 去重拼接（纯逻辑，可 Node 单测）
+├── popup.html          面板 UI v2（当前页/按域名/自动抓取/本地库）
 ├── popup.js            面板逻辑：抓取 → 列表 → 复制/入库/导出/清空
-├── test_core.js        核心逻辑单测（60 断言）
-├── ext_live_test.js    真浏览器端到端测试（26 断言）
+├── test_core.js        核心逻辑单测（46 断言）
+├── ext_live_test.js    真浏览器端到端测试（25 断言）
 └── LICENSE             MIT
 ```
 

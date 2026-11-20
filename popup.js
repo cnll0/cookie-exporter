@@ -1,5 +1,5 @@
 // popup.js — v2 面板：不限网站抓 Cookie（当前标签页 / 按域名 / 自动抓取 / 本地库 / 导出）
-const $list = document.getElementById('list');
+// 无内置平台表：所有站点一视同仁，抓到按可注册域归类。
 const $status = document.getElementById('status');
 const $auto = document.getElementById('auto');
 const $current = document.getElementById('current');
@@ -37,31 +37,10 @@ function renderSite(el, r, emptyText) {
   if (!r || !r.ok || !r.host) { el.className = 'empty'; el.textContent = emptyText; return; }
   el.className = 'row';
   el.innerHTML =
-    '<span class="nm">' + esc(r.label) + (r.known ? '' : ' <span style="color:#9aa0a6">(通用)</span>') + '</span>' +
+    '<span class="nm">' + esc(r.label) + '</span>' +
     '<span class="ct ' + (r.count === 0 ? 'zero' : 'good') + '">' + r.count + ' 项</span>' +
     '<button data-act="copyhost" data-host="' + esc(r.host) + '"' + (r.count === 0 ? ' disabled' : '') + '>复制</button>' +
     '<button data-act="savehost" data-host="' + esc(r.host) + '" class="ghost"' + (r.count === 0 ? ' disabled' : '') + '>存本地</button>';
-}
-
-// ---- 内置平台（快捷复制，打标签用）----
-function renderPlatforms(rows) {
-  $list.innerHTML = '';
-  for (const r of rows) {
-    const row = document.createElement('div');
-    row.className = 'row';
-    const ctCls = r.count === 0 ? 'zero' : (r.keysHit && r.keysHit.length ? 'good' : '');
-    const ctTxt = r.count === 0 ? '未登录' : (r.keysHit && r.keysHit.length ? r.count + ' 项 ✓' : r.count + ' 项');
-    row.innerHTML =
-      '<span class="nm">' + esc(r.label) + '</span>' +
-      '<span class="ct ' + ctCls + '">' + ctTxt + '</span>' +
-      '<button data-tag="' + esc(r.tag) + '"' + (r.count === 0 ? ' disabled' : '') + '>复制</button>';
-    $list.appendChild(row);
-  }
-}
-async function scanPlatforms() {
-  const resp = await send({ type: 'scan' });
-  if (!resp || !resp.ok) { status('扫描失败: ' + (resp && resp.error)); return; }
-  renderPlatforms(resp.platforms);
 }
 
 // ---- 当前标签页 ----
@@ -124,18 +103,6 @@ for (const container of [$current, $manual, $vault]) {
   });
 }
 
-$list.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('button[data-tag]');
-  if (!btn || btn.disabled) return;
-  btn.disabled = true;
-  const resp = await send({ type: 'copy', tag: btn.dataset.tag });
-  btn.disabled = false;
-  if (!resp || !resp.ok) { status('失败: ' + (resp && resp.error)); return; }
-  if (!resp.count || !resp.header) { status('该平台没有可用 Cookie'); return; }
-  const ok = await copyToClipboard(resp.header);
-  status(ok ? '已复制 ' + resp.label + ' 的 ' + resp.count + ' 项 ' + keyMark(resp.keysHit) + ' → 已到剪贴板' : '剪贴板写入被拒：请点击扩展图标后重试');
-});
-
 $grabDomain.addEventListener('click', grabDomain);
 $domain.addEventListener('keydown', (e) => { if (e.key === 'Enter') grabDomain(); });
 
@@ -166,5 +133,5 @@ $clearVault.addEventListener('click', async () => {
 (async function init() {
   const a = await send({ type: 'getAuto' });
   $auto.checked = !!(a && a.enabled);
-  await Promise.all([scanPlatforms(), loadCurrent(), loadVault()]);
+  await Promise.all([loadCurrent(), loadVault()]);
 })();

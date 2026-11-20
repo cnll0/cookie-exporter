@@ -1,5 +1,5 @@
 // background.js — Cookie Exporter service worker（ES module 形态）
-// v2：不限网站。已知 15 平台只用于「打标签 + 标登录位」；抓取能力是任意域名。
+// 不限网站、无内置平台表：任何域名都用同一套通用 keys 抓取、归类到可注册域。
 // Chrome 157 起本 SW 按 module 跑，importScripts() 会抛，必须用 import。
 import './cookie_core.js';
 
@@ -27,27 +27,10 @@ async function collectForSpec(spec) {
   return {
     label: spec.label, header: built.header, count: built.count, keysHit: built.keysHit,
     cookies: all.filter(c => CORE.isLive({ expires: c.expirationDate ? c.expirationDate : 0 })
-                             && CORE.matchPlatform({ domain: c.domain }, spec))
-                .map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path,
-                             expires: c.expirationDate ? c.expirationDate : 0, httpOnly: !!c.httpOnly, secure: !!c.secure }))
+                              && CORE.matchSpec({ domain: c.domain }, spec))
+                 .map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path,
+                              expires: c.expirationDate ? c.expirationDate : 0, httpOnly: !!c.httpOnly, secure: !!c.secure }))
   };
-}
-
-function specForTag(tag) {
-  const p = CORE.PLATFORMS.find(x => x.tag === tag);
-  if (!p) return null;
-  return { label: p.label, domains: p.domains, keys: p.keys, known: true };
-}
-
-async function collectForPlatform(p) { return collectForSpec({ label: p.label, domains: p.domains, keys: p.keys, known: true }); }
-
-async function scanAll() {
-  const out = [];
-  for (const p of CORE.PLATFORMS) {
-    const r = await collectForPlatform(p);
-    out.push({ tag: p.tag, label: p.label, count: r.count, header: r.header, keysHit: r.keysHit });
-  }
-  return out;
 }
 
 // ---- vault（本地保管的已抓取站点）----
@@ -103,8 +86,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const reply = p => { p.then(r => sendResponse({ ok: true, ...r })).catch(e => sendResponse({ ok: false, error: String(e && e.message || e) })); return true; };
   if (!msg || !msg.type) return false;
 
-  if (msg.type === 'scan') return reply(scanAll().then(platforms => ({ platforms })));
-
   // 任意站点：抓当前活动标签页（或指定 host）
   if (msg.type === 'scanCurrent' || msg.type === 'scanDomain') {
     return reply((async () => {
@@ -124,11 +105,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // 存入 vault（手动抓当前站后「保存到本地」用）
   if (msg.type === 'saveSite') return reply(saveSite(msg.host).then(r => ({ site: r })));
 
-  if (msg.type === 'copy' && msg.tag) {
-    const spec = specForTag(msg.tag);
-    if (!spec) { sendResponse({ ok: false, error: 'unknown tag' }); return false; }
-    return reply(collectForSpec(spec).then(r => ({ count: r.count, header: r.header, keysHit: r.keysHit, label: spec.label })));
-  }
+  // 任意 host 一键复制（弹窗里当前页/域名行/vault 行的复制都走这里）
   if (msg.type === 'copyHost' && msg.host) {
     const spec = CORE.specForHost(msg.host);
     return reply(collectForSpec(spec).then(r => ({ count: r.count, header: r.header, keysHit: r.keysHit, label: spec.label, host: msg.host })));
@@ -143,4 +120,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // module 作用域 ≠ globalThis：CDP 调试与自动化实测要能从全局拿到入口，显式挂一份
-self.CE_MOD = { CORE, collectForSpec, collectForPlatform, scanAll, saveSite, getVault, getAuto, setAuto, exportNetscape };
+self.CE_MOD = { CORE, collectForSpec, saveSite, getVault, getAuto, setAuto, exportNetscape };
