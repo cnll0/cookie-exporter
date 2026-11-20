@@ -49,6 +49,17 @@ async function saveSite(host) {
   return { domain: dom, label: r.label, count: r.count, keysHit: r.keysHit, header: r.header };
 }
 
+// 单站点删除：只删本地库里指定的一个可注册域，其它站点不动（区别于 clearVault 群体清空）
+async function deleteSite(domain) {
+  const vault = await getVault();
+  const existed = Object.prototype.hasOwnProperty.call(vault, domain);
+  if (existed) {
+    delete vault[domain];
+    await chrome.storage.local.set({ [VAULT_KEY]: vault });
+  }
+  return { deleted: existed, domain };
+}
+
 async function getAuto() { return !!(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY]; }
 async function setAuto(v) { await chrome.storage.local.set({ [AUTO_KEY]: !!v }); return !!v; }
 
@@ -105,6 +116,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   // 存入 vault（手动抓当前站后「保存到本地」用）
   if (msg.type === 'saveSite') return reply(saveSite(msg.host).then(r => ({ site: r })));
 
+  // 单站点删除：只删指定的一个可注册域，其它站点保留（区别于 clearVault 群体清空）
+  if (msg.type === 'deleteSite' && msg.domain) return reply(deleteSite(msg.domain));
+
   // 任意 host 一键复制（弹窗里当前页/域名行/vault 行的复制都走这里）
   if (msg.type === 'copyHost' && msg.host) {
     const spec = CORE.specForHost(msg.host);
@@ -120,4 +134,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // module 作用域 ≠ globalThis：CDP 调试与自动化实测要能从全局拿到入口，显式挂一份
-self.CE_MOD = { CORE, collectForSpec, saveSite, getVault, getAuto, setAuto, exportNetscape };
+self.CE_MOD = { CORE, collectForSpec, saveSite, deleteSite, getVault, getAuto, setAuto, exportNetscape };

@@ -226,6 +226,22 @@ function killTestBrowsers() {
   t('exportNetscape 输出 Netscape 头 + 制表符分隔 + httpOnly 值',
     exported.ok === true && /^# Netscape HTTP Cookie File/.test(txt) && /__puus\t/.test(txt) && /PUUS_LIVETEST/.test(txt), JSON.stringify(txt.slice(0, 100)));
 
+  // 9b) 单点删除：删一个站，其它站保留（区别于 clearVault 群体清空）
+  const savedB = await msg("{type:'saveSite',host:'pan.baidu.com'}");
+  t('saveSite 第二站 pan.baidu.com → ok/domain=baidu.com',
+    savedB.ok === true && savedB.site && savedB.site.domain === 'baidu.com', JSON.stringify(savedB).slice(0, 160));
+  const del = await msg("{type:'deleteSite',domain:'quark.cn'}");
+  t('deleteSite quark.cn → ok/deleted=true/domain=quark.cn',
+    del.ok === true && del.deleted === true && del.domain === 'quark.cn', JSON.stringify(del));
+  const vaultAfterDel = await msg("{type:'getVault'}");
+  t('单点删除：被删除站 quark.cn 已不在 vault',
+    vaultAfterDel.ok === true && !vaultAfterDel.vault['quark.cn'], JSON.stringify(vaultAfterDel).slice(0, 160));
+  t('单点删除：其它站 baidu.com 仍在（区别于群体清空）',
+    vaultAfterDel.ok === true && !!vaultAfterDel.vault['baidu.com'], JSON.stringify(vaultAfterDel).slice(0, 160));
+  const delAgain = await msg("{type:'deleteSite',domain:'quark.cn'}");
+  t('deleteSite 重复删不存在站 → deleted=false（幂等）',
+    delAgain.ok === true && delAgain.deleted === false, JSON.stringify(delAgain));
+
   // 10) getAuto/setAuto 往返（默认关、可开可关）
   const a0 = await msg("{type:'getAuto'}");
   t('getAuto 默认关（新 profile）', a0.ok === true && a0.enabled === false, JSON.stringify(a0));
@@ -244,7 +260,7 @@ function killTestBrowsers() {
 
   console.log('');
   console.log(fail === 0
-    ? 'LIVE TEST PASS — ' + pass + '/' + pass + '（loadUnpacked → 读 httpOnly → 过滤拼接 → 剪贴板 → 全站 scanDomain/saveSite/vault/export/auto，全链路通）'
+    ? 'LIVE TEST PASS — ' + pass + '/' + pass + '（loadUnpacked → 读 httpOnly → 过滤拼接 → 剪贴板 → 全站 scanDomain/saveSite/单点删除/vault/export/auto，全链路通）'
     : 'LIVE TEST FAIL — ' + pass + ' passed / ' + fail + ' failed');
   bail(fail === 0 ? 0 : 1);
 })().catch(err => { console.log('FATAL: ' + (err && err.stack || err)); killTestBrowsers(); process.exit(9); });

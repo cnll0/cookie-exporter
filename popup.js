@@ -72,7 +72,8 @@ async function loadVault() {
     row.innerHTML =
       '<span class="nm">' + esc(s.label || d) + '</span>' +
       '<span class="ct ' + (s.count === 0 ? 'zero' : 'good') + '">' + (s.count || 0) + ' 项</span>' +
-      '<button data-act="copyvault" data-domain="' + esc(d) + '">复制</button>';
+      '<button data-act="copyvault" data-domain="' + esc(d) + '">复制</button>' +
+      '<button data-act="deletesite" data-domain="' + esc(d) + '" class="danger">删除</button>';
     $vault.appendChild(row);
   }
 }
@@ -99,6 +100,12 @@ for (const container of [$current, $manual, $vault]) {
       if (!s || !s.header) { status('该站无 Cookie'); return; }
       const ok = await copyToClipboard(s.header);
       status(ok ? '已复制 ' + (s.label || btn.dataset.domain) + ' → 已到剪贴板' : '剪贴板写入被拒');
+    } else if (act === 'deletesite') {
+      const d = btn.dataset.domain;
+      if (!confirm('删除已保存的「' + d + '」？其它站点不受影响。')) return;
+      const r = await send({ type: 'deleteSite', domain: d });
+      if (r && r.ok && r.deleted) { status('已删除 ' + d); await loadVault(); }
+      else status('删除失败（该站可能已不存在）');
     }
   });
 }

@@ -33,8 +33,9 @@
 1. 先用 Chrome 正常登录目标网站（任意站，例如 `pan.quark.cn`）
 2. 点扩展图标打开面板，用上面三种方式之一抓取
 3. 「复制」得到 Cookie 串进入剪贴板；「存本地」进下方「已保存」库
-4. 「导出全部」得到 `cookies.txt`（Netscape 格式）；「清空本地库」删除所有已存条目
-5. 打开「自动抓取」后，之后每浏览一个站会自动入库（同域最快 15s 一次）
+4. 「已保存」库里每行有「复制」和「删除」两个按钮：「删除」是**单站点删除**（弹窗确认后只删这一个站，其它站点保留）；顶部「清空」才是群体清空所有条目
+5. 「导出全部」得到 `cookies.txt`（Netscape 格式）
+6. 打开「自动抓取」后，之后每浏览一个站会自动入库（同域最快 15s 一次）
 
 显示「未登录 / 0 项」：说明当前 Chrome 里没有该站的 Cookie，先登录一次即可。
 显示「未检出登录位」：说明抓到的 Cookie 里没有命中通用关键名，但 Cookie 串本身仍已完整抓到、可复制。
@@ -68,14 +69,14 @@ node test_core.js
 
 预期输出：`SELFTEST PASS — 46/46`
 
-真浏览器端到端测试（临时启动独立 profile 的 Chrome，注入测试 Cookie，验证"装载 → 读 httpOnly → 拼接 → messaging → 剪贴板 → 全站 scanDomain/saveSite/vault/export/auto"，结束自动清理）：
+真浏览器端到端测试（临时启动独立 profile 的 Chrome，注入测试 Cookie，验证"装载 → 读 httpOnly → 拼接 → messaging → 剪贴板 → 全站 scanDomain/saveSite/单点删除/vault/export/auto"，结束自动清理）：
 
 ```bash
 node ext_live_test.js          # headless
 node ext_live_test.js visible  # 有头模式；剪贴板断言在 headless 下可能不共享，优先用 visible
 ```
 
-预期输出：`LIVE TEST PASS — 25/25`
+预期输出：`LIVE TEST PASS — 30/30`
 
 ## 文件结构
 
@@ -85,9 +86,9 @@ node ext_live_test.js visible  # 有头模式；剪贴板断言在 headless 下�
 ├── background.js       service worker：任意域抓取/自动抓取入库/vault/Netscape 导出/响应消息
 ├── cookie_core.js      域名匹配 + 可注册域归类 + 通用 keys + 去重拼接（纯逻辑，可 Node 单测）
 ├── popup.html          面板 UI v2（当前页/按域名/自动抓取/本地库）
-├── popup.js            面板逻辑：抓取 → 列表 → 复制/入库/导出/清空
+├── popup.js            面板逻辑：抓取 → 列表 → 复制/入库/单点删除/导出/清空
 ├── test_core.js        核心逻辑单测（46 断言）
-├── ext_live_test.js    真浏览器端到端测试（25 断言）
+├── ext_live_test.js    真浏览器端到端测试（30 断言）
 └── LICENSE             MIT
 ```
 
