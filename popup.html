@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  body { width: 340px; margin: 0; padding: 12px; font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; background:#1e1f22; color:#e8e8e8; }
+  h1 { font-size: 14px; margin: 0 0 4px; }
+  .sub { color:#9aa0a6; font-size:11px; margin-bottom:10px; }
+  .row { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:8px; margin-bottom:6px; background:#26282c; }
+  .row:hover { background:#2f3237; }
+  .row .nm { flex:1; }
+  .row .ct { color:#9aa0a6; font-size:11px; }
+  .row .ct.zero { color:#f85149; }
+  .row .ct.good { color:#7ee787; }
+  button { border:0; border-radius:6px; padding:5px 10px; background:#3a76d1; color:#fff; cursor:pointer; font-size:12px; }
+  button:disabled { background:#3a3d42; color:#777; cursor:default; }
+  .tip { color:#9aa0a6; font-size:11px; margin-top:8px; }
+  #status { min-height:16px; font-size:11px; margin-top:6px; color:#7ee787; }
+</style>
+</head>
+<body>
+  <h1>Cookie 导出器</h1>
+  <div class="sub">点「复制」→ 该平台的 Cookie 串进入剪贴板，可直接粘贴使用。</div>
+  <div id="list"></div>
+  <div id="status"></div>
+  <div class="tip">Cookie 只进剪贴板，不上传网络。若某平台显示 0 项，先用 Chrome 登录一次该网站。</div>
+  <script src="popup.js"></script>
+</body>
+</html>
