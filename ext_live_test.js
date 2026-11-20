@@ -1,13 +1,13 @@
-// ext_live_test.js v3 — 真浏览器装载扩展端到端实测
-// v2 全部异常的总根因（ext_probe.js 实锤）：Chrome/Edge 157 stable 忽略 --load-extension，
-//   之前抓到的 id admccjkmockfdflocgggjfgdacdodkdf 是内置组件扩展 "Gemini in Chrome"
-//   （manifest name 实读为证）⇒ 本扩展从未被装载；popup.html/cookie_core.js 的
-//   ERR_FILE_NOT_FOUND 都是 Gemini 的资源不存在，与中文路径、headless 均无关。
-// v3 正确姿势：browser 级 CDP `Extensions.loadUnpacked{path}` 装载，按返回的 extensionId 走。
+// ext_live_test.js v4 — 真浏览器装载扩展端到端实测（v2 全站版）
+// 历史根因（ext_probe.js 实锤）：Chrome/Edge 157 stable 忽略 --load-extension，
+//   旧抓到的 id admccjkmockfdflocgggjfgdacdodkdf 是内置组件 "Gemini in Chrome" ⇒ 扩展从未装载。
+// 正解：browser 级 CDP `Extensions.loadUnpacked{path}`（返回 {id}）。
+// v4 相对 v3：popup DOM 变（#list/.row 不再等于全部行）→ 只数 `#list .row`；
+//   新增 v2 能力实测：scanDomain 任意域（已知/未知）、saveSite→getVault→exportNetscape、getAuto/setAuto。
 // 链路：起浏览器 → loadUnpacked → 注入 3 条测试 cookie（含 httpOnly __puus）→
-//       开 chrome-extension://<id>/popup.html → sendMessage{scan} → 点复制 → 断言 #status → Get-Clipboard 复核
+//       开 popup → scan 注入验证 → 点复制 → 断言 #status → Get-Clipboard 复核 → v2 全站能力断言
 // 用法：node ext_live_test.js            headless（默认，快、不弹窗）
-//       node ext_live_test.js visible    可见窗口（若 headless 下 popup/剪贴板受限再用）
+//       node ext_live_test.js visible    可见窗口（剪贴板断言必须 visible）
 'use strict';
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -94,15 +94,14 @@ function killTestBrowsers() {
   const cdp = await Cdp.connect(ver.webSocketDebuggerUrl);
   const bail = code => { cdp.close(); try { child.kill(); } catch {} killTestBrowsers(); process.exit(code); };
 
-  // 1) 正解装载：Extensions.loadUnpacked（--load-extension 在 stable 已被忽略，v2 的教训）
+  // 1) 正解装载：Extensions.loadUnpacked（--load-extension 在 stable 已被忽略）
   let extId = null;
   try {
     const r = await cdp.send('Extensions.loadUnpacked', { path: EXT_DIR });
-    extId = (r && (r.extensionId || r.id)) || null;   // 实测 Chrome 157 返回字段是 {id:"..."}
+    extId = (r && (r.extensionId || r.id)) || null;
     console.log('loadUnpacked => ' + JSON.stringify(r));
   } catch (e) {
     console.log('Extensions.loadUnpacked 不可用: ' + (e && e.message || e));
-    console.log('（该 CDP 域需 Chrome>=128；仍失败就按 安装说明.txt 手动装载后由人工过一遍）');
     bail(3);
   }
   if (!extId) { console.log('FAIL: 没拿到 extensionId'); bail(3); }
@@ -124,32 +123,37 @@ function killTestBrowsers() {
   const pop = (await cdp.send('Target.createTarget', { url: `chrome-extension://${extId}/popup.html` })).targetId;
   const q = (await cdp.send('Target.attachToTarget', { targetId: pop, flatten: true })).sessionId;
   await cdp.send('Runtime.enable', {}, q);
-  await sleep(2000);                                       // popup.js 自动 scan()
+  await sleep(2000);                                       // popup.js init() 自动 scan
 
   const ev = (expression) => cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, q);
+  const msg = (objLiteral) => ev(`chrome.runtime.sendMessage(${objLiteral}).then(r => JSON.stringify(r)).catch(x => JSON.stringify({err:String(x)}))`)
+    .then(res => { try { return JSON.parse(res.result.value); } catch { return {}; } });
 
   const e = JSON.parse((await ev(`JSON.stringify({
       href: location.href,
       rtId: (typeof chrome !== 'undefined' && chrome.runtime) ? chrome.runtime.id : 'NO',
       manifestName: (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest().name : 'NO',
-      rows: document.querySelectorAll('.row').length,
+      listRows: document.querySelectorAll('#list .row').length,
+      allRows: document.querySelectorAll('.row').length,
+      hasAuto: !!document.getElementById('auto'),
+      hasDomain: !!document.getElementById('domain'),
+      hasVault: !!document.getElementById('vault'),
       hasYunx: !!document.getElementById('yunx')
     })`)).result.value);
   console.log('  popup env: ' + JSON.stringify(e));
   t('popup 是真扩展页面（runtime.id 对上）', e.rtId === extId, e.rtId);
   t('manifest 身份正确（Cookie Exporter）', /Cookie Exporter/.test(e.manifestName || ''), e.manifestName);
-  t('popup 渲染 15 个平台行', e.rows === 15, 'got ' + e.rows);
+  t('v2 DOM：#list 渲染 15 个内置平台行', e.listRows === 15, 'got ' + e.listRows);
+  t('v2 DOM：总 .row 数 > 15（当前页/域名行也在，修正 v1 死断言）', e.allRows > e.listRows, 'all=' + e.allRows + ' list=' + e.listRows);
+  t('v2 DOM：自动抓取/按域名/本地库控件齐备', e.hasAuto && e.hasDomain && e.hasVault);
   t('去云析化：popup 无云析桥残留 DOM', e.hasYunx === false, e.hasYunx);
 
-  // 4) messaging 驱动真 SW：scan
-  const scanR = await ev(`chrome.runtime.sendMessage({type:'scan'}).then(r => JSON.stringify(r)).catch(x => JSON.stringify({err:String(x)}))`);
-  let scan = {}; try { scan = JSON.parse(scanR.result.value); } catch {}
-  t('sendMessage{scan} 返回 ok', scan.ok === true, String(scanR.result.value).slice(0, 140));
+  // 4) messaging 驱动真 SW：scan（已知平台打标签，逻辑未变）
+  const scan = await msg("{type:'scan'}");
+  t('sendMessage{scan} 返回 ok', scan.ok === true, JSON.stringify(scan).slice(0, 140));
   const list = (scan.platforms || []);
   const quark = list.find(s => s.tag === 'quark');
   const baidu = list.find(s => s.tag === 'baidu');
-  // 注意：count 不是 2 —— headless 真联网，pan.quark.cn 服务端会给全新 profile 下发一堆游客 cookie。
-  // 有意义的断言是「注入的两条在、值对、不串平台」，不是死扣数量。
   const pairs = quark ? Object.fromEntries(String(quark.header).split('; ').map(kv => {
     const i = kv.indexOf('='); return [kv.slice(0, i), kv.slice(i + 1)];
   })) : {};
@@ -174,7 +178,8 @@ function killTestBrowsers() {
       return 'TIMEOUT: ' + document.getElementById('status').textContent;
     })()`)).result.value;
   console.log('  popup 状态: ' + statusTxt);
-  t('点复制 → 已复制 夸克网盘 N 项 + 登录位 → 已到剪贴板', /已复制 .*夸克.* \d+ 项/.test(statusTxt) && /__pus\/__puus|__puus\/__pus/.test(statusTxt) && /已到剪贴板/.test(statusTxt), statusTxt);
+  t('点复制 → 已复制 夸克网盘 N 项 + 登录位 → 已到剪贴板',
+    /已复制 .*夸克.* \d+ 项/.test(statusTxt) && /__pus\/__puus|__puus\/__pus/.test(statusTxt) && /已到剪贴板/.test(statusTxt), statusTxt);
 
   // 6) 独立复核系统剪贴板（headless 可能不与 Windows 剪贴板同步 ⇒ 轮询，仍不过则改 visible 模式跑）
   let clip = '';
@@ -186,9 +191,52 @@ function killTestBrowsers() {
     clip.includes('__puus=PUUS_LIVETEST') && clip.includes('__pus=PUS_LIVETEST') && !clip.includes('BAIDU_DECOY'),
     JSON.stringify(clip.slice(0, 80)) + (MODE === 'headless' ? ' ← headless 若不共享剪贴板请用 visible 模式复跑' : ''));
 
+  // ===== v2 新能力：不限网站 =====
+  // 7) scanDomain 已知站（复用注入的 quark cookie，验证任意域名入口走通）
+  const sdKnown = await msg("{type:'scanDomain',host:'pan.quark.cn'}");
+  t('scanDomain 已知站 pan.quark.cn → ok/known=true/domain=quark.cn',
+    sdKnown.ok === true && sdKnown.known === true && sdKnown.domain === 'quark.cn', JSON.stringify(sdKnown).slice(0, 160));
+  t('scanDomain 已知站抓到注入的 httpOnly 值',
+    sdKnown.ok === true && /PUUS_LIVETEST/.test(sdKnown.header || ''), sdKnown && sdKnown.count);
+
+  // 8) scanDomain 未知站（不在 15 平台表 → 仍用通用 keys 抓，证明"不限网站"）
+  const sdUnknown = await msg("{type:'scanDomain',host:'random-site-xyz.com'}");
+  t('scanDomain 未知站 random-site-xyz.com → ok/known=false/domain 原样',
+    sdUnknown.ok === true && sdUnknown.known === false && sdUnknown.domain === 'random-site-xyz.com', JSON.stringify(sdUnknown).slice(0, 160));
+  t('scanDomain 未知站无 cookie → count=0/header 空（优雅返回非报错）',
+    sdUnknown.ok === true && sdUnknown.count === 0 && sdUnknown.header === '', JSON.stringify(sdUnknown).slice(0, 160));
+
+  // 9) saveSite → getVault → exportNetscape（本地库 + Netscape 导出全链路）
+  const saved = await msg("{type:'saveSite',host:'pan.quark.cn'}");
+  t('saveSite pan.quark.cn → ok/domain=quark.cn/count>=2',
+    saved.ok === true && saved.site && saved.site.domain === 'quark.cn' && saved.site.count >= 2, JSON.stringify(saved).slice(0, 160));
+  const vault = await msg("{type:'getVault'}");
+  t('getVault 含 quark.cn（本地库落库成功）',
+    vault.ok === true && vault.vault && vault.vault['quark.cn'] && vault.vault['quark.cn'].count >= 2, JSON.stringify(vault).slice(0, 160));
+  const exported = await msg("{type:'exportNetscape'}");
+  const txt = (exported && exported.text) || '';
+  t('exportNetscape 输出 Netscape 头 + 制表符分隔 + httpOnly 值',
+    exported.ok === true && /^# Netscape HTTP Cookie File/.test(txt) && /__puus\t/.test(txt) && /PUUS_LIVETEST/.test(txt), JSON.stringify(txt.slice(0, 100)));
+
+  // 10) getAuto/setAuto 往返（默认关、可开可关）
+  const a0 = await msg("{type:'getAuto'}");
+  t('getAuto 默认关（新 profile）', a0.ok === true && a0.enabled === false, JSON.stringify(a0));
+  const aOn = await msg("{type:'setAuto',value:true}");
+  const a1 = await msg("{type:'getAuto'}");
+  t('setAuto(true) → getAuto 开', aOn.ok === true && aOn.enabled === true && a1.enabled === true, JSON.stringify({ aOn, a1 }));
+  const aOff = await msg("{type:'setAuto',value:false}");
+  const a2 = await msg("{type:'getAuto'}");
+  t('setAuto(false) → getAuto 关', aOff.ok === true && aOff.enabled === false && a2.enabled === false, JSON.stringify({ aOff, a2 }));
+
+  // 11) clearVault 清理
+  const cleared = await msg("{type:'clearVault'}");
+  const vault2 = await msg("{type:'getVault'}");
+  t('clearVault 后 getVault 为空', cleared.ok === true && vault2.ok === true && Object.keys(vault2.vault || {}).length === 0,
+    JSON.stringify(vault2).slice(0, 120));
+
   console.log('');
   console.log(fail === 0
-    ? 'LIVE TEST PASS — ' + pass + '/' + pass + '（loadUnpacked 装载 → 读 httpOnly/v20 → 过滤拼接 → messaging → 剪贴板，全链路通）'
+    ? 'LIVE TEST PASS — ' + pass + '/' + pass + '（loadUnpacked → 读 httpOnly → 过滤拼接 → 剪贴板 → 全站 scanDomain/saveSite/vault/export/auto，全链路通）'
     : 'LIVE TEST FAIL — ' + pass + ' passed / ' + fail + ' failed');
   bail(fail === 0 ? 0 : 1);
 })().catch(err => { console.log('FATAL: ' + (err && err.stack || err)); killTestBrowsers(); process.exit(9); });

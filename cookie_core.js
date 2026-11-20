@@ -1,6 +1,8 @@
 (function (root) {
   'use strict';
   // 平台定义：domains 用 endswith 匹配 host_key；keys 是登录位探针（判断「登录态完整吗」）
+  // 说明：这张表只用于「给已知站点打标签 + 标登录位」，不再是抓取范围的限制。
+  //       v2 起抓取能力是任意域名（见 specForHost / registrableDomain）。
   var PLATFORMS = [
     { tag: 'quark',  label: '夸克网盘', domains: ['quark.cn'], keys: ['__pus', '__puus', '__kp', 'kps', 'sign', 'vcode'] },
     { tag: 'uc',     label: 'UC 网盘',  domains: ['uc.cn'],    keys: ['__pus', '__puus', 'kps_wg', 'sign_wg', 'vcode_wg'] },
@@ -18,6 +20,15 @@
     { tag: 'weibo',    label: '微博',     domains: ['weibo.com'], keys: ['SUB', 'SUBP'] },
     { tag: 'acfun',    label: 'AcFun',   domains: ['acfun.cn'], keys: ['acfun_ueid', 'acfun_fast'] }
   ];
+
+  // 未知站点的通用「登录位」提示（非精确，仅给个 ✓ 参考，不参与过滤）
+  var COMMON_KEYS = ['session', 'sessionid', 'sid', 'token', 'access_token', 'auth', 'login',
+                     'uid', 'userid', 'SUB', 'JSESSIONID', 'PHPSESSID', 'remember', 'csrf'];
+
+  // 常见多级公共后缀：把 host 归类到「可注册域」用于分组（非安全边界，仅归类，够用即可）
+  var MULTI_SUFFIX = ['com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn', 'co.uk',
+                      'org.uk', 'gov.uk', 'com.au', 'org.au', 'co.jp', 'ne.jp', 'co.kr',
+                      'com.br', 'com.tw', 'com.hk', 'co.nz', 'com.sg'];
 
   function nowSec() { return Date.now() / 1000; }
   function isLive(c) { return !c.expires || c.expires <= 0 || c.expires > nowSec(); }
@@ -45,15 +56,16 @@
     var parts = [];
     for (var j = 0; j < names.length; j++) parts.push(names[j] + '=' + best[names[j]].value);
     var keysHit = [];
-    for (var k = 0; k < p.keys.length; k++) {
-      var key = p.keys[k];
+    var keyList = p.keys || [];
+    for (var k = 0; k < keyList.length; k++) {
+      var key = keyList[k];
       for (var n = 0; n < names.length; n++) {
         if (names[n] === key || names[n].indexOf(key) >= 0) { keysHit.push(key); break; }
       }
     }
     return { header: parts.join('; '), count: names.length, keysHit: keysHit };
   }
-  // 从 URL/hostname 找平台（右键菜单用）
+  // 从 URL/hostname 找已知平台（标签用）
   function platformForHost(host) {
     host = (host || '').toLowerCase();
     for (var i = 0; i < PLATFORMS.length; i++) {
@@ -65,8 +77,31 @@
     }
     return null;
   }
+  // host/IPv4 → 可注册域（分组 + 抓取范围）。只做归类，不追求完整 PSL。
+  function registrableDomain(host) {
+    host = (host || '').toLowerCase().trim().replace(/^\./, '').split('/')[0].split(':')[0];
+    if (!host) return '';
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return host; // IPv4 原样
+    var parts = host.split('.').filter(Boolean);
+    if (parts.length <= 2) return parts.join('.');
+    var l2 = parts[parts.length - 2] + '.' + parts[parts.length - 1];
+    var l3 = parts[parts.length - 3] + '.' + l2;
+    if (MULTI_SUFFIX.indexOf(l2) >= 0) return l3;
+    return l2;
+  }
+  // 任意 host → 抓取规格 {label, domains, keys, known}。已知平台用其专属 keys，否则用通用 keys。
+  function specForHost(host) {
+    var p = platformForHost(host);
+    if (p) return { label: p.label, domains: p.domains, keys: p.keys, known: true };
+    var dom = registrableDomain(host);
+    return { label: dom, domains: [dom], keys: COMMON_KEYS, known: false };
+  }
 
-  var api = { PLATFORMS: PLATFORMS, isLive: isLive, matchPlatform: matchPlatform, buildHeader: buildHeader, platformForHost: platformForHost };
+  var api = {
+    PLATFORMS: PLATFORMS, COMMON_KEYS: COMMON_KEYS, MULTI_SUFFIX: MULTI_SUFFIX,
+    isLive: isLive, matchPlatform: matchPlatform, buildHeader: buildHeader,
+    platformForHost: platformForHost, registrableDomain: registrableDomain, specForHost: specForHost
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.CookieExporterCore = api;
 })(typeof self !== 'undefined' ? self : globalThis);

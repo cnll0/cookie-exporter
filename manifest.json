@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Cookie Exporter",
-  "version": "1.0.0",
-  "description": "把 Chrome 已登录网站的 Cookie（含 httpOnly）按平台一键复制到剪贴板。数据不出本机。",
+  "version": "2.0.0",
+  "description": "不限网站：在任意站点一键抓取 Cookie（含 httpOnly）到本地，或开启自动抓取随浏览归类保存。数据不出本机。",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Cookie 导出器"
@@ -17,36 +17,6 @@
       "description": "打开 Cookie 面板"
     }
   },
-  "permissions": ["cookies", "activeTab", "clipboardWrite", "storage"],
-  "host_permissions": [
-    "*://*.quark.cn/*",
-    "*://*.uc.cn/*",
-    "*://*.baidu.com/*",
-    "*://*.139.com/*",
-    "*://*.10086.cn/*",
-    "*://*.123pan.com/*",
-    "*://*.123684.com/*",
-    "*://*.115.com/*",
-    "*://*.115cdn.com/*",
-    "*://*.alipan.com/*",
-    "*://*.aliyundrive.com/*",
-    "*://*.guangyapan.com/*",
-    "*://*.lanzou.com/*",
-    "*://*.lanzoui.com/*",
-    "*://*.lanzoux.com/*",
-    "*://*.lanzouq.com/*",
-    "*://*.lanzoug.com/*",
-    "*://*.lanzoum.com/*",
-    "*://*.lanzoup.com/*",
-    "*://*.lanzoub.com/*",
-    "*://*.lanzonn.com/*",
-    "*://*.lanzol.com/*",
-    "*://*.bilibili.com/*",
-    "*://*.xiaohongshu.com/*",
-    "*://*.pixiv.net/*",
-    "*://*.douyin.com/*",
-    "*://*.kuaishou.com/*",
-    "*://*.weibo.com/*",
-    "*://*.acfun.cn/*"
-  ]
+  "permissions": ["cookies", "activeTab", "tabs", "webNavigation", "clipboardWrite", "storage"],
+  "host_permissions": ["*://*/*"]
 }

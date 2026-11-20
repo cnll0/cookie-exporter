@@ -4,27 +4,63 @@
 <meta charset="utf-8">
 <style>
   :root { color-scheme: dark; }
-  body { width: 340px; margin: 0; padding: 12px; font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; background:#1e1f22; color:#e8e8e8; }
-  h1 { font-size: 14px; margin: 0 0 4px; }
+  body { width: 360px; margin: 0; padding: 12px; font: 13px/1.5 system-ui, "Microsoft YaHei", sans-serif; background:#1e1f22; color:#e8e8e8; }
+  h1 { font-size: 14px; margin: 0 0 2px; }
   .sub { color:#9aa0a6; font-size:11px; margin-bottom:10px; }
-  .row { display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:8px; margin-bottom:6px; background:#26282c; }
+  .sec { margin-bottom: 12px; }
+  .sec > .h { font-size:11px; color:#8ab4f8; margin-bottom:5px; display:flex; align-items:center; gap:6px; }
+  .row { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px; margin-bottom:5px; background:#26282c; }
   .row:hover { background:#2f3237; }
-  .row .nm { flex:1; }
+  .row .nm { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row .ct { color:#9aa0a6; font-size:11px; }
   .row .ct.zero { color:#f85149; }
   .row .ct.good { color:#7ee787; }
-  button { border:0; border-radius:6px; padding:5px 10px; background:#3a76d1; color:#fff; cursor:pointer; font-size:12px; }
+  button { border:0; border-radius:6px; padding:5px 9px; background:#3a76d1; color:#fff; cursor:pointer; font-size:12px; white-space:nowrap; }
   button:disabled { background:#3a3d42; color:#777; cursor:default; }
-  .tip { color:#9aa0a6; font-size:11px; margin-top:8px; }
-  #status { min-height:16px; font-size:11px; margin-top:6px; color:#7ee787; }
+  button.ghost { background:#3a3d42; }
+  input[type=text] { flex:1; min-width:0; background:#1e1f22; border:1px solid #44484f; color:#e8e8e8; border-radius:6px; padding:5px 8px; font-size:12px; }
+  label.sw { display:flex; align-items:center; gap:6px; cursor:pointer; }
+  label.sw input { accent-color:#3a76d1; }
+  #status { min-height:16px; font-size:11px; margin-top:6px; color:#7ee787; word-break:break-all; }
+  .tip { color:#9aa0a6; font-size:11px; margin-top:8px; line-height:1.6; }
+  .empty { color:#777; font-size:11px; padding:4px 8px; }
 </style>
 </head>
 <body>
-  <h1>Cookie 导出器</h1>
-  <div class="sub">点「复制」→ 该平台的 Cookie 串进入剪贴板，可直接粘贴使用。</div>
-  <div id="list"></div>
+  <h1>Cookie 导出器 <span style="color:#7ee787;font-size:11px">v2 · 不限网站</span></h1>
+  <div class="sub">任意网站抓 Cookie（含 httpOnly），只进本机剪贴板/本地存储，不外发。</div>
+
+  <div class="sec">
+    <div class="h"><label class="sw"><input type="checkbox" id="auto"> 自动抓取（浏览过的站点自动入库）</label></div>
+    <div class="tip" style="margin-top:2px">关闭时只在点按钮时抓一次；开启后每站最快 15 秒记录一次。</div>
+  </div>
+
+  <div class="sec">
+    <div class="h">当前标签页</div>
+    <div id="current" class="empty">读取中…</div>
+  </div>
+
+  <div class="sec">
+    <div class="h">按域名抓取</div>
+    <div class="row">
+      <input type="text" id="domain" placeholder="example.com">
+      <button id="grabDomain">抓取</button>
+    </div>
+    <div id="manual" class="empty">输入域名后抓取该站全部 Cookie。</div>
+  </div>
+
+  <div class="sec">
+    <div class="h">已保存 <button id="exportAll" class="ghost" style="padding:2px 7px;font-size:11px">导出全部 cookies.txt</button> <button id="clearVault" class="ghost" style="padding:2px 7px;font-size:11px">清空</button></div>
+    <div id="vault" class="empty">暂无保存的站点。</div>
+  </div>
+
+  <div class="sec">
+    <div class="h">内置平台（快捷一键复制）</div>
+    <div id="list"></div>
+  </div>
+
   <div id="status"></div>
-  <div class="tip">Cookie 只进剪贴板，不上传网络。若某平台显示 0 项，先用 Chrome 登录一次该网站。</div>
+  <div class="tip">Cookie 等同登录凭证：复制/导出后请妥善保管，不要发给不可信第三方。本扩展无网络上报。</div>
   <script src="popup.js"></script>
 </body>
 </html>
