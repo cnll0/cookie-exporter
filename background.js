@@ -29,35 +29,56 @@ async function collectForSpec(spec) {
     cookies: all.filter(c => CORE.isLive({ expires: c.expirationDate ? c.expirationDate : 0 })
                               && CORE.matchSpec({ domain: c.domain }, spec))
                  .map(c => ({ name: c.name, value: c.value, domain: c.domain, path: c.path,
-                              expires: c.expirationDate ? c.expirationDate : 0, httpOnly: !!c.httpOnly, secure: !!c.secure }))
+                              expires: c.expirationDate ? c.expirationDate : 0, httpOnly: !!c.httpOnly,
+                              secure: !!c.secure, hostOnly: !!c.hostOnly }))
   };
 }
 
 // ---- vault（本地保管的已抓取站点）----
 async function getVault() { return (await chrome.storage.local.get(VAULT_KEY))[VAULT_KEY] || {}; }
+
+// vault 的读-改-写必须串行：两个并发抓取（多标签同时提交）各自读到旧 vault 再写回，会丢站点。
+let vaultChain = Promise.resolve();
+function queueVault(task) {
+  const run = vaultChain.then(task);
+  vaultChain = run.then(() => {}, () => {});
+  return run;
+}
+function updateVault(change) {
+  return queueVault(async () => {
+    const vault = await getVault();
+    const out = await change(vault);
+    await chrome.storage.local.set({ [VAULT_KEY]: vault });
+    return out;
+  });
+}
+
 async function saveSite(host) {
   const spec = CORE.specForHost(host);
   const dom = CORE.registrableDomain(host);
   if (!dom) return null;
   const r = await collectForSpec(spec);
-  const vault = await getVault();
-  vault[dom] = {
-    label: r.label, updated: Date.now(), header: r.header, count: r.count,
-    keysHit: r.keysHit, cookies: r.cookies
-  };
-  await chrome.storage.local.set({ [VAULT_KEY]: vault });
+  await updateVault(vault => {
+    vault[dom] = {
+      label: r.label, updated: Date.now(), header: r.header, count: r.count,
+      keysHit: r.keysHit, cookies: r.cookies
+    };
+  });
   return { domain: dom, label: r.label, count: r.count, keysHit: r.keysHit, header: r.header };
 }
 
 // 单站点删除：只删本地库里指定的一个可注册域，其它站点不动（区别于 clearVault 群体清空）
-async function deleteSite(domain) {
-  const vault = await getVault();
-  const existed = Object.prototype.hasOwnProperty.call(vault, domain);
-  if (existed) {
-    delete vault[domain];
-    await chrome.storage.local.set({ [VAULT_KEY]: vault });
-  }
-  return { deleted: existed, domain };
+function deleteSite(domain) {
+  return updateVault(vault => {
+    const existed = Object.prototype.hasOwnProperty.call(vault, domain);
+    if (existed) delete vault[domain];
+    return { deleted: existed, domain };
+  });
+}
+
+async function clearVault() {
+  await queueVault(() => chrome.storage.local.remove(VAULT_KEY));
+  return {};
 }
 
 async function getAuto() { return !!(await chrome.storage.local.get(AUTO_KEY))[AUTO_KEY]; }
@@ -80,16 +101,9 @@ chrome.webNavigation?.onCommitted?.addListener(async (details) => {
 // Netscape cookies.txt 导出（vault 全部站点）
 async function exportNetscape() {
   const vault = await getVault();
-  const lines = ['# Netscape HTTP Cookie File', '# Cookie Exporter v2 — 本地导出', ''];
-  for (const dom of Object.keys(vault)) {
-    for (const c of (vault[dom].cookies || [])) {
-      const hostOnly = c.domain && c.domain[0] !== '.' ? 'FALSE' : 'TRUE';
-      const secure = c.secure ? 'TRUE' : 'FALSE';
-      const exp = c.expires > 0 ? Math.floor(c.expires) : 0;
-      lines.push([c.domain, hostOnly, c.path || '/', secure, exp, c.name, c.value].join('\t'));
-    }
-  }
-  return lines.join('\r\n');
+  const all = [];
+  for (const dom of Object.keys(vault)) all.push(...(vault[dom].cookies || []));
+  return CORE.netscapeText(all);
 }
 
 // ---- 消息入口 ----
@@ -129,9 +143,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'setAuto') return reply(setAuto(msg.value).then(enabled => ({ enabled })));
   if (msg.type === 'getVault') return reply(getVault().then(vault => ({ vault })));
   if (msg.type === 'exportNetscape') return reply(exportNetscape().then(text => ({ text })));
-  if (msg.type === 'clearVault') return reply(chrome.storage.local.remove(VAULT_KEY).then(() => ({})));
+  if (msg.type === 'clearVault') return reply(clearVault());
   return false;
 });
 
 // module 作用域 ≠ globalThis：CDP 调试与自动化实测要能从全局拿到入口，显式挂一份
-self.CE_MOD = { CORE, collectForSpec, saveSite, deleteSite, getVault, getAuto, setAuto, exportNetscape };
+self.CE_MOD = { CORE, collectForSpec, saveSite, deleteSite, clearVault, getVault, getAuto, setAuto, exportNetscape };
