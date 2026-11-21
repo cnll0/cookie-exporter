@@ -1,0 +1,11 @@
+{
+  "name": "cookie-exporter",
+  "private": true,
+  "description": "Chrome MV3 扩展：任意站点抓 Cookie 并导出。核心逻辑为纯函数，node test_core.js 自验证。",
+  "scripts": {
+    "test": "node test_core.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

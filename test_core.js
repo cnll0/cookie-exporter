@@ -1,6 +1,7 @@
 // test_core.js — cookie_core 逻辑自测（纯 Node，不需要 Chrome）
 // 覆盖：通用 keys / matchSpec 域名匹配 / 过期过滤 / 同名去重按 path 具体度 /
-//       登录位探针 / registrableDomain / specForHost（全站无内置平台）/ manifest 通配权限
+//       登录位探针 / registrableDomain（IPv6 / 端口 / 末尾点 / 粘贴 URL）/ specForHost（全站无内置平台）/
+//       Netscape cookies.txt 导出格式 / manifest 通配权限
 const core = require('./cookie_core.js');
 
 let pass = 0, fail = 0;
@@ -88,6 +89,70 @@ t('permissions 恰为 v2 六项',
   mf.permissions.slice().sort().join(',') === ['activeTab', 'clipboardWrite', 'cookies', 'storage', 'tabs', 'webNavigation'].sort().join(','));
 t('version = 2.0.0', mf.version === '2.0.0');
 t('service_worker 以 ES module 加载（Chrome157 必须）', mf.background && mf.background.type === 'module');
+
+console.log('== registrableDomain 边界（IPv6 / 端口 / 末尾点 / 大小写 / 粘贴 URL）==');
+t('www.example.co.uk → example.co.uk（另一种多级后缀）', core.registrableDomain('www.example.co.uk') === 'example.co.uk');
+t('a.b.example.com.au → example.com.au', core.registrableDomain('a.b.example.com.au') === 'example.com.au');
+t('example.com. 末尾点 → example.com', core.registrableDomain('example.com.') === 'example.com');
+t('www.example.com.cn. 末尾点 + 多级后缀 → example.com.cn', core.registrableDomain('www.example.com.cn.') === 'example.com.cn');
+t('WWW.Example.COM 大小写 → example.com', core.registrableDomain('WWW.Example.COM') === 'example.com');
+t('pan.quark.cn:8080 带端口 → quark.cn', core.registrableDomain('pan.quark.cn:8080') === 'quark.cn');
+t('192.168.1.1:8080 带端口 → 192.168.1.1', core.registrableDomain('192.168.1.1:8080') === '192.168.1.1');
+t('[::1] IPv6 字面量 → ::1', core.registrableDomain('[::1]') === '::1');
+t('[2606:4700::1111] IPv6 字面量 → 2606:4700::1111', core.registrableDomain('[2606:4700::1111]') === '2606:4700::1111');
+t('裸 IPv6 ::1 → ::1', core.registrableDomain('::1') === '::1');
+t('粘贴整条 URL → quark.cn', core.registrableDomain('https://pan.quark.cn/disk?a=1') === 'quark.cn');
+t('空串 → 空串', core.registrableDomain('') === '');
+t('null → 空串（不抛）', core.registrableDomain(null) === '');
+t('全点 host → 空串', core.registrableDomain('...') === '');
+t('[::1] 的 spec 能匹配自己的 cookie 域', core.matchSpec({ domain: '::1' }, core.specForHost('[::1]')));
+
+console.log('== buildHeader：cookie 名撞 Object.prototype 时不丢 ==');
+const protoCookies = [
+  { name: '__proto__', value: 'P', domain: '.example.com', path: '/', expires: future },
+  { name: 'constructor', value: 'C', domain: '.example.com', path: '/', expires: future },
+  { name: 'toString', value: 'T', domain: '.example.com', path: '', expires: future },
+];
+const rp = core.buildHeader(protoCookies, spec('example.com'));
+t('count=3（原型键名不参与去重）', rp.count === 3);
+t('__proto__ 不被原型吞掉', rp.header.indexOf('__proto__=P') >= 0);
+t('constructor 保留', rp.header.indexOf('constructor=C') >= 0);
+t('toString（path 为空）保留', rp.header.indexOf('toString=T') >= 0);
+
+console.log('== keysHit 子串匹配（记录当前行为，改不改待产品决策）==');
+const fuzzy = core.buildHeader([
+  { name: 'fluid_theme', value: '1', domain: '.example.com', path: '/', expires: future },
+  { name: 'author_pref', value: '2', domain: '.example.com', path: '/', expires: future },
+  { name: 'csrf_token', value: '3', domain: '.example.com', path: '/', expires: future },
+], spec('example.com'));
+t('当前子串匹配：fluid_theme 命中 uid（误报）', fuzzy.keysHit.indexOf('uid') >= 0);
+t('当前子串匹配：author_pref 命中 auth（误报）', fuzzy.keysHit.indexOf('auth') >= 0);
+t('csrf_token 命中 csrf（语义上真命中）', fuzzy.keysHit.indexOf('csrf') >= 0);
+const caps = core.buildHeader([{ name: 'Session', value: 'x', domain: '.example.com', path: '/', expires: future }], spec('example.com'));
+t('当前大小写敏感：Session 不算命中 session', caps.keysHit.length === 0);
+
+console.log('== Netscape cookies.txt 导出格式（curl 可吃）==');
+const nexText = (c) => core.netscapeText(c);
+const NX = nexText([
+  { domain: '.example.com', path: '/', secure: true, expires: 1764000000.9, name: 'a', value: 'A' },
+  { domain: 'api.example.com', path: '/v1', secure: false, expires: 0, name: 'sess', value: 'S' },
+  { domain: 'example.com', path: '/', secure: false, hostOnly: false, expires: 1764000000, name: 'b', value: 'B' },
+  { domain: 'x.example.com', path: '/', secure: false, hostOnly: true, expires: 1764000000, name: 'c', value: 'C' },
+  { domain: '.example.com', path: '/', secure: false, expires: 1764000000, name: 'bad', value: 'a\tb' },
+  { path: '/', name: 'nodomain', value: 'D' },
+]);
+const nxLines = NX.split('\r\n');
+const nxData = nxLines.filter(l => l && l.charAt(0) !== '#');
+t('首行是 curl 认的魔数行', nxLines[0] === '# Netscape HTTP Cookie File');
+t('文件以 CRLF 收尾', NX.slice(-2) === '\r\n');
+t('数据行 = 4（制表符值 / 无域名的行被丢弃）', nxData.length === 4);
+t('域 cookie 列：域/含子域/路径/secure/到期/名/值（到期取整）',
+  nxData[0] === '.example.com\tTRUE\t/\tTRUE\t1764000000\ta\tA');
+t('会话 cookie 到期列写 0（curl 视为 session）', nxData[1] === 'api.example.com\tFALSE\t/v1\tFALSE\t0\tsess\tS');
+t('hostOnly 标记优先于域名前导点', nxData[2] === 'example.com\tTRUE\t/\tFALSE\t1764000000\tb\tB');
+t('host-only cookie 列写 FALSE', nxData[3] === 'x.example.com\tFALSE\t/\tFALSE\t1764000000\tc\tC');
+t('每行恰好 7 个字段', nxData.every(l => l.split('\t').length === 7));
+t('含制表符的值不进文件', NX.indexOf('bad') < 0);
 
 console.log('');
 console.log(fail === 0
